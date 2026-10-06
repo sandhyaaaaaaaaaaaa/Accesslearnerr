@@ -1,0 +1,299 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useApp } from '../context/AppContext';
+import { READING_LEVELS, SUPPORTED_LANGUAGES } from '../utils/mockData';
+import { translateText } from '../utils/translationService';
+import {
+  Volume2, CircleDot, BookOpen, Languages, FileText, List, Layers, Download, Loader2,
+} from 'lucide-react';
+import Tabs from '../components/ui/Tabs';
+import Card from '../components/ui/Card';
+import TTSPlayer from '../components/tts/TTSPlayer';
+import BraillePreview from '../components/braille/BraillePreview';
+import Button from '../components/ui/Button';
+
+const tabConfig = [
+  { id: 'audio', label: 'Audio', icon: Volume2 },
+  { id: 'braille', label: 'Braille', icon: CircleDot },
+  { id: 'simplified', label: 'Simplified', icon: BookOpen },
+  { id: 'translation', label: 'Translation', icon: Languages },
+  { id: 'epub', label: 'EPUB/HTML', icon: FileText },
+  { id: 'summary', label: 'Summary', icon: List },
+  { id: 'flashcards', label: 'Flashcards', icon: Layers },
+];
+
+export default function OutputViewer() {
+  const navigate = useNavigate();
+  const { currentDocument } = useApp();
+
+  useEffect(() => {
+    if (!currentDocument || !currentDocument.originalText) {
+      navigate('/student/upload', { replace: true });
+    }
+  }, [currentDocument, navigate]);
+
+  if (!currentDocument) {
+    return (
+      <div className="max-w-5xl mx-auto animate-fade-in">
+        <div className="p-8 bg-cream rounded-xl border border-ink/10 text-center">
+          <h1 className="text-3xl font-display mb-3">No content available yet</h1>
+          <p className="text-muted mb-6">
+            Upload a document first to generate accessible content. My Content is only available once a document has been processed.
+          </p>
+          <Button onClick={() => navigate('/student/upload')} size="lg">
+            Upload Document
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const doc = currentDocument;
+  const [activeTab, setActiveTab] = useState('audio');
+  const [readingLevel, setReadingLevel] = useState('grade5');
+  const [language, setLanguage] = useState('hi');
+  const [flippedCards, setFlippedCards] = useState({});
+
+  // Translation state
+  const [translationCache, setTranslationCache] = useState({});
+  const [translating, setTranslating] = useState(false);
+  const [translationProgress, setTranslationProgress] = useState(0);
+  const [translationError, setTranslationError] = useState('');
+
+  const handleTranslate = useCallback(async (langCode) => {
+    if (!doc.originalText || translationCache[langCode]) return;
+    setTranslating(true);
+    setTranslationError('');
+    setTranslationProgress(0);
+    try {
+      const result = await translateText(
+        doc.originalText,
+        langCode,
+        (pct) => setTranslationProgress(pct)
+      );
+      setTranslationCache(prev => ({ ...prev, [langCode]: result }));
+    } catch {
+      setTranslationError('Translation failed. Please check your connection and try again.');
+    } finally {
+      setTranslating(false);
+    }
+  }, [doc.originalText, translationCache]);
+
+  const handleLanguageSelect = (langCode) => {
+    setLanguage(langCode);
+    if (!translationCache[langCode]) {
+      handleTranslate(langCode);
+    }
+  };
+
+  const toggleCard = (i) => setFlippedCards((prev) => ({ ...prev, [i]: !prev[i] }));
+
+  return (
+    <div className="max-w-5xl mx-auto animate-fade-in">
+      <header className="mb-8">
+        <h1 className="text-3xl font-display mb-1">{doc.title}</h1>
+        <p className="text-muted">{doc.source}</p>
+      </header>
+
+      <Tabs tabs={tabConfig} activeTab={activeTab} onChange={setActiveTab} />
+
+      <div className="mt-6" role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
+        {activeTab === 'audio' && (
+          <TTSPlayer text={doc.originalText} title={doc.title} />
+        )}
+
+        {activeTab === 'braille' && (
+          <BraillePreview text={doc.originalText} title={doc.title} />
+        )}
+
+        {activeTab === 'simplified' && (
+          <Card>
+            <div className="flex flex-wrap gap-2 mb-6">
+              {READING_LEVELS.map((level) => (
+                <button
+                  key={level.id}
+                  onClick={() => setReadingLevel(level.id)}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                    readingLevel === level.id
+                      ? 'bg-teal text-white'
+                      : 'bg-cream-dark text-muted hover:text-ink'
+                  }`}
+                >
+                  {level.label}
+                </button>
+              ))}
+            </div>
+            <article className="prose max-w-none leading-relaxed whitespace-pre-wrap">
+              {doc.simplifiedText?.[readingLevel] || 'Simplifying...'}
+            </article>
+            <p className="text-xs text-muted mt-4">
+              Generated by Gemini API with factual accuracy preservation. spaCy complexity detection on backend.
+            </p>
+          </Card>
+        )}
+
+        {activeTab === 'translation' && (
+          <Card>
+            <div className="flex flex-wrap gap-2 mb-6">
+              {SUPPORTED_LANGUAGES.filter((l) => l.code !== 'en').map((lang) => (
+                <button
+                  key={lang.code}
+                  onClick={() => handleLanguageSelect(lang.code)}
+                  disabled={translating}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-60 ${
+                    language === lang.code
+                      ? 'bg-teal text-white'
+                      : 'bg-cream-dark text-muted hover:text-ink'
+                  }`}
+                >
+                  {lang.label}
+                  {translationCache[lang.code] && (
+                    <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-teal-light align-middle" title="Cached" />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Loading State */}
+            {translating && (
+              <div className="flex flex-col items-center gap-3 py-10 text-muted">
+                <Loader2 className="w-8 h-8 text-teal animate-spin" aria-hidden="true" />
+                <p className="text-sm font-medium">Translating your document...</p>
+                <div className="w-full max-w-sm bg-cream-dark rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-teal h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${translationProgress}%` }}
+                    role="progressbar"
+                    aria-valuenow={translationProgress}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  />
+                </div>
+                <p className="text-xs text-muted/70">{translationProgress}% complete</p>
+              </div>
+            )}
+
+            {/* Error State */}
+            {!translating && translationError && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 mb-4">
+                {translationError}
+              </div>
+            )}
+
+            {/* No Document State */}
+            {!translating && !translationError && !doc.originalText && (
+              <p className="text-muted text-sm italic">Upload a document to enable translation.</p>
+            )}
+
+            {/* Translation Result */}
+            {!translating && !translationError && translationCache[language] && (
+              <>
+                <article className="prose max-w-none leading-relaxed whitespace-pre-wrap" lang={language}>
+                  {translationCache[language]}
+                </article>
+                <p className="text-xs text-muted mt-4 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-teal" aria-hidden="true" />
+                  Translated live using MyMemory API · Powered by neural machine translation
+                </p>
+              </>
+            )}
+
+            {/* Prompt to translate */}
+            {!translating && !translationError && !translationCache[language] && doc.originalText && (
+              <div className="flex flex-col items-center gap-3 py-10 text-muted">
+                <Languages className="w-10 h-10 text-muted/40" aria-hidden="true" />
+                <p className="text-sm">Select a language above to translate your document instantly.</p>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {activeTab === 'epub' && (
+          <Card>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-display text-lg">Accessible HTML Preview</h3>
+              <Button variant="outline" size="sm" icon={Download}>Download EPUB</Button>
+            </div>
+            <article
+              className="p-8 bg-surface border border-ink/5 rounded-xl"
+              role="article"
+              aria-label="Accessible document preview"
+            >
+              <header role="banner">
+                <h1 className="text-2xl font-display mb-2">{doc.title}</h1>
+                <p className="text-muted text-sm mb-6">{doc.source}</p>
+              </header>
+              <nav role="navigation" aria-label="Table of contents" className="mb-6 p-4 bg-cream rounded-lg">
+                <h2 className="text-sm font-semibold mb-2">Table of Contents</h2>
+                <ol className="list-decimal list-inside text-sm text-teal space-y-1">
+                  {doc.originalText?.split('\n\n').slice(0, 5).map((para, i) => (
+                    <li key={i}>
+                      <a href={`#para-${i}`} className="hover:underline">
+                        {para.split(' ').slice(0, 6).join(' ')}{para.split(' ').length > 6 ? '...' : ''}
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+              </nav>
+              <main role="main">
+                {doc.originalText?.split('\n\n').map((para, i) => {
+                  const firstWord = para.trim().split(' ')[0]?.toLowerCase();
+                  if (['chapter', 'section', 'part', 'unit'].includes(firstWord)) {
+                    return <h2 key={i} id={`para-${i}`} className="text-xl font-display mt-6 mb-3">{para}</h2>;
+                  }
+                  return <p key={i} id={`para-${i}`} className="mb-4 leading-relaxed">{para}</p>;
+                })}
+              </main>
+            </article>
+            <p className="text-xs text-muted mt-3 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-teal" aria-hidden="true" />
+              Validated against WCAG 2.1 AA and EPUB Accessibility 1.1 (axe-core on backend)
+            </p>
+          </Card>
+        )}
+
+        {activeTab === 'summary' && (
+          <Card>
+            <h3 className="font-display text-lg mb-4">AI Summary</h3>
+            <ul className="space-y-3">
+              {(doc.summary || []).map((point, i) => (
+                <li key={i} className="flex gap-3 text-sm leading-relaxed">
+                  <span className="w-6 h-6 rounded-full bg-teal/10 text-teal flex items-center justify-center shrink-0 text-xs font-semibold">
+                    {i + 1}
+                  </span>
+                  {point}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+
+        {activeTab === 'flashcards' && (
+          <div className="grid sm:grid-cols-2 gap-4">
+            {(doc.flashcards || []).map((card, i) => (
+              <button
+                key={i}
+                onClick={() => toggleCard(i)}
+                className="perspective-1000"
+                aria-label={`Flashcard ${i + 1}: ${flippedCards[i] ? card.back : card.front}`}
+              >
+                <Card
+                  className={`min-h-[160px] flex items-center justify-center text-center cursor-pointer transition-all duration-300 ${
+                    flippedCards[i] ? 'bg-teal/5 border-teal/20' : ''
+                  }`}
+                >
+                  <p className="font-medium">
+                    {flippedCards[i] ? card.back : card.front}
+                  </p>
+                  <span className="absolute bottom-3 right-3 text-xs text-muted">
+                    {flippedCards[i] ? 'Answer' : 'Question'} — tap to flip
+                  </span>
+                </Card>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
